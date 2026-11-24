@@ -11,7 +11,8 @@ Lærervisning (alt stof, uanset pensum, og med forlæg på hver opgave): samme a
 |---|---|
 | `index.html` | Selve appen |
 | `pensum.js` | Hvilke færdigheder der er gennemgået. **Den eneste fil, der skal rettes i løbet af året** |
-| `opgaver.js` | Opgavebanken: kategorier, opgaver, hints og løsninger |
+| `opgaver.js` | Stofområder og underkategorier (og evt. faste opgaver) |
+| `skabeloner.js` | Opgavebanken: skabeloner, der laver nye tal hver gang, med hints og løsninger |
 | `temml.min.js`, `temml.css`, `Temml.woff2` | Visning af matematik |
 
 ## Opdatér pensum

@@ -60,7 +60,14 @@ button{font:inherit;color:inherit;cursor:pointer}
 .area-head{display:flex;align-items:center;gap:12px;padding:12px 14px;min-height:56px}
 .area-head label{flex:1;display:flex;gap:12px;align-items:center;font-weight:700;cursor:pointer}
 .area.off .area-head{color:var(--soft)}
-.area-sub{padding:0 14px 14px;display:flex;flex-wrap:wrap;gap:8px}
+.catlist{list-style:none;margin:0;padding:0 14px 6px 22px}
+.catrow{display:flex;gap:12px;align-items:center;min-height:46px;border-top:1px solid var(--line);cursor:pointer;font-size:16px}
+.catrow span:first-of-type{flex:1}
+.catrow.locked{color:var(--soft);cursor:not-allowed}
+.opgnav{display:flex;gap:6px;overflow-x:auto;padding:2px 0 10px;margin-bottom:6px;scrollbar-width:thin}
+.opgnav button{flex:none;min-width:40px;height:40px;border-radius:10px;border:1px solid var(--line);background:var(--paper);font-weight:700;font-size:15px}
+.opgnav button.done{background:var(--sol);border-color:var(--sol-line)}
+.opgnav button.cur{border:2px solid var(--pen);color:var(--pen)}
 input[type=checkbox]{width:22px;height:22px;accent-color:var(--pen);flex:none}
 .chip{display:inline-flex;align-items:center;gap:6px;min-height:40px;padding:6px 12px;border-radius:999px;border:1px solid var(--line);background:var(--paper);font-size:15px}
 .chip[aria-pressed=true]{background:var(--pen-bg);border-color:var(--pen);color:var(--ink)}
@@ -134,10 +141,20 @@ math.tml-display{margin:8px 0;overflow-x:auto;overflow-y:hidden;padding-block:2p
 <script src="temml.min.js"></script>
 <script src="pensum.js"></script>
 <script src="opgaver.js"></script>
+<script src="skabeloner.js"></script>
 <script>
 {
 // ---------- data og hjælpere ----------
-const PENSUM = window.PENSUM || [], KAT = window.KATEGORIER || [], OPG = window.OPGAVER || [];
+const PENSUM = window.PENSUM || [], KAT = window.KATEGORIER || [];
+const TPL = window.SKABELONER || [], tplById = {}; TPL.forEach(t => tplById[t.id] = t);
+const OPG = (window.OPGAVER || []).concat(TPL.map(t => ({ ...t, skabelon: true })));
+let iidTael = 0;
+// En skabelon får nye tal hver gang; statiske opgaver returneres uændret
+function instans(o) {
+  if (!o.skabelon) return o;
+  let g; try { g = tplById[o.id].lav(); } catch (e) { return o; }
+  return { ...o, iid: o.id + "#" + (++iidTael), intro: g.intro, figur: g.figur, dele: o.dele.map((d, i) => ({ ...d, ...g.dele[i] })) };
+}
 const LAERER = location.hash === "#alt";
 const gennemgaaet = new Set(PENSUM.filter(p => p.gennemgaaet).map(p => p.id));
 const underNavn = {}; KAT.forEach(k => k.under.forEach(u => underNavn[u.id] = u.navn));
@@ -165,7 +182,8 @@ function mat(s) {
   return String(s).replace(/\$\$([\s\S]+?)\$\$/g, (_, t) => tex(t, true)).replace(/\$([^$]+?)\$([.,:;?!)]?)/g, (_, t, p) => p ? '<span style="white-space:nowrap">' + tex(t, false) + p + "</span>" : tex(t, false));
 }
 const dots = n => '<span class="dots" title="Sværhedsgrad ' + n + ' af 3" aria-label="Sværhedsgrad ' + n + ' af 3">' + "●".repeat(n) + "<i>" + "●".repeat(3 - n) + "</i></span>";
-const delKey = (o, d) => o.id + "|" + d.bogstav;
+const delKey = (o, d) => o.id + "|" + d.bogstav;          // gemt vurdering: pr. opgave/skabelon
+const tk = (o, d) => (o.iid || o.id) + "|" + d.bogstav;   // visningstilstand: pr. instans
 const delOpen = d => LAERER || d.kraever.every(f => gennemgaaet.has(f));
 
 // ---------- valg (huskes mellem besøg) ----------
@@ -178,9 +196,19 @@ const tilgaengelig = new Set();
 OPG.forEach(o => o.dele.forEach(d => { if (delOpen(d)) tilgaengelig.add(d.kategori); }));
 valg.under = valg.under.filter(u => tilgaengelig.has(u));
 
-const iValg = d => valg.under.includes(d.kategori) && valg.sv.includes(d.sv) && delOpen(d);
+// En delopgave vises, når dens underkategori og sværhedsgrad er valgt, den er gennemgået,
+// og de delopgaver, den bygger på (afh), også vises. Så får man kun opgaver inden for sit valg.
+function synlige(o) {
+  const vist = new Set(), ud = [];
+  o.dele.forEach(d => {
+    const ok = valg.under.includes(d.kategori) && valg.sv.includes(d.sv) && delOpen(d) && (d.afh || []).every(b => vist.has(b));
+    if (ok) { vist.add(d.bogstav); ud.push(d); }
+  });
+  // ikkeAlene: let delopgave, der kun står i delprøve 2 pga. konteksten – vises kun sammen med opgavens andre dele
+  return ud.length === 1 && ud[0].ikkeAlene ? [] : ud;
+}
 function matchende() {
-  return OPG.filter(o => (!valg.delproeve || o.delproeve === valg.delproeve) && o.dele.some(iValg));
+  return OPG.filter(o => (!valg.delproeve || o.delproeve === valg.delproeve) && synlige(o).length);
 }
 
 // ---------- prioritering: ukendte først, derefter de svageste ----------
@@ -189,13 +217,13 @@ function seneste(key) {
   return null;
 }
 function prioritet(o) {
-  const relevante = o.dele.filter(iValg);
+  const relevante = synlige(o);
   let min = Infinity, set = false;
   relevante.forEach(d => { const f = seneste(delKey(o, d)); if (f) { set = true; min = Math.min(min, f.v - (f.h > 0 ? 0.5 : 0)); } else min = -1; });
   return set ? min : -1;
 }
 function koe() {
-  return matchende().map(o => ({ o, p: prioritet(o) + Math.random() * 0.4 })).sort((a, b) => a.p - b.p).map(x => x.o);
+  return matchende().map(o => ({ o, p: prioritet(o) + Math.random() * 0.4 })).sort((a, b) => a.p - b.p).map(x => instans(x.o));
 }
 
 // ---------- figurer ----------
@@ -264,10 +292,10 @@ function visStart() {
     if (k.kommer) return "";
     if (!aabne.length) return `<div class="area off"><div class="area-head"><label><input type="checkbox" disabled> ${esc(k.navn)}</label><span class="tag">${k.kommer ? "Kommer senere" : "Ikke gennemgået"}</span></div></div>`;
     return `<div class="area"><div class="area-head"><label><input type="checkbox" data-omr="${k.id}" ${alleValgt ? "checked" : ""}> ${esc(k.navn)}</label><span class="small muted">blandet eller vælg selv</span></div>
-      <div class="area-sub">${subs.map(u => {
+      <ul class="catlist">${subs.filter(u => tilgaengelig.has(u.id)).concat(subs.filter(u => !tilgaengelig.has(u.id))).map(u => {
         const aaben = tilgaengelig.has(u.id);
-        return `<button type="button" class="chip" data-under="${u.id}" aria-pressed="${valg.under.includes(u.id)}" ${aaben ? "" : 'disabled title="Ikke gennemgået endnu"'}>${esc(u.navn)}</button>`;
-      }).join("")}</div></div>`;
+        return `<li><label class="catrow${aaben ? "" : " locked"}"><input type="checkbox" data-under="${u.id}" ${valg.under.includes(u.id) ? "checked" : ""} ${aaben ? "" : "disabled"}><span>${esc(u.navn)}</span>${aaben ? "" : '<span class="tag">Ikke gennemgået</span>'}</label></li>`;
+      }).join("")}</ul></div>`;
   }).join("");
   const n = matchende().length;
   view.innerHTML = `
@@ -286,9 +314,9 @@ function visStart() {
         <p class="small muted">Karakteren afhænger af hele besvarelsen, og pointgrænserne fastsættes for hvert eksamenssæt.</p>
       </details></div>
     ${lagringVirker ? "" : '<p class="small muted">Din browser tillader ikke, at appen gemmer dine vurderinger. Du kan stadig træne.</p>'}
-    <div class="startbar"><button class="btn primary" id="start" type="button" ${n ? "" : "disabled"}>${n ? `Start · ${n} opgave${n === 1 ? "" : "r"}` : (valg.under.length ? "Ingen opgaver matcher dit valg" : "Vælg noget stof først")}</button></div>`;
-  view.querySelectorAll("[data-under]").forEach(b => b.addEventListener("click", () => {
-    const u = b.dataset.under; valg.under = valg.under.includes(u) ? valg.under.filter(x => x !== u) : [...valg.under, u]; gemValg(); visStart();
+    <div class="startbar"><button class="btn primary" id="start" type="button" ${n ? "" : "disabled"}>${n ? "Start træning" : (valg.under.length ? "Ingen opgaver matcher dit valg" : "Vælg noget stof først")}</button></div>`;
+  view.querySelectorAll("[data-under]").forEach(c => c.addEventListener("change", () => {
+    const u = c.dataset.under; valg.under = c.checked ? [...new Set([...valg.under, u])] : valg.under.filter(x => x !== u); gemValg(); visStart();
   }));
   view.querySelectorAll("[data-omr]").forEach(c => c.addEventListener("change", () => {
     const k = KAT.find(k => k.id === c.dataset.omr), ids = k.under.map(u => u.id).filter(u => tilgaengelig.has(u));
@@ -298,7 +326,7 @@ function visStart() {
   view.querySelectorAll("[data-sv]").forEach(b => b.addEventListener("click", () => {
     const v = +b.dataset.sv; valg.sv = valg.sv.includes(v) ? valg.sv.filter(x => x !== v) : [...valg.sv, v].sort(); gemValg(); visStart();
   }));
-  const st = document.getElementById("start"); if (st) st.addEventListener("click", () => { Object.keys(tilstand).forEach(k => delete tilstand[k]); session = { koe: koe(), i: 0, fokus: {} }; visOpgave(); });
+  const st = document.getElementById("start"); if (st) st.addEventListener("click", () => { Object.keys(tilstand).forEach(k => delete tilstand[k]); session = { koe: koe(), i: 0, runder: [0], start: Date.now() }; visOpgave(); });
 }
 
 let session = null;
@@ -306,31 +334,43 @@ const tilstand = {}; // pr. delopgave i denne session: hints vist, løsning vist
 
 function visOpgave() {
   const { koe: q, i } = session;
-  if (i >= q.length) return visSlut();
   const o = q[i];
   figurer = []; ro.disconnect();
-  const dele = o.dele.filter(delOpen);
+  const dele = synlige(o), enkelt = dele.length === 1;
+  const nyRunde = i > 0 && session.runder.includes(i);
+  session.maks = Math.max(session.maks || 0, i);
+  const faerdig = j => { const x = session.koe[j]; return synlige(x).every(d => (tilstand[tk(x, d)] || {}).v); };
+  const nav = session.maks > 0 ? `<nav class="opgnav" aria-label="Opgaver i denne træning">${Array.from({ length: session.maks + 1 }, (_, j) =>
+    `<button type="button" data-go="${j}" class="${j === i ? "cur" : ""} ${faerdig(j) ? "done" : ""}" aria-label="Opgave ${j + 1}${faerdig(j) ? ", vurderet" : ""}"${j === i ? ' aria-current="true"' : ""}>${j + 1}</button>`).join("")}</nav>` : "";
   view.innerHTML = `
-    <div class="taskhead"><button class="btn link" id="back" type="button">← Skift valg</button><span class="small muted">Opgave ${i + 1} af ${q.length}</span></div>
+    <div class="taskhead"><button class="btn link" id="back" type="button">← Skift valg</button><span class="row"><span class="small muted">Opgave ${i + 1}</span><button class="btn link" id="afslut" type="button">Afslut</button></span></div>
+    ${nav}
+    ${nyRunde ? '<div class="banner">Du har været igennem alle opgavetyper i dit valg. De næste opgaver er de samme typer igen – med nye tal.</div>' : ""}
     <article class="sheet">
-      <div class="row spread" style="margin-bottom:10px"><span class="badge">${o.delproeve === 1 ? "Delprøve 1 · i hånden" : "Delprøve 2 · med CAS"}</span><span class="row">${o.opgave1 ? '<span class="tag">Opgave 1-format</span>' : ""}${LAERER ? `<span class="tag">${esc(o.id)}${o.forlaeg ? " · " + esc(o.forlaeg) : " · egen variant"}</span>` : ""}</span></div>
+      <div class="row spread" style="margin-bottom:10px"><span class="badge">${o.delproeve === 1 ? "Delprøve 1 · i hånden" : "Delprøve 2 · med CAS"}</span><span class="row">${o.opgave1 ? '<span class="tag">Opgave 1-format</span>' : ""}${LAERER ? `<span class="tag">${o.skabelon ? "skabelon · " : ""}${esc(o.id)}${o.forlaeg ? " · " + esc(o.forlaeg) : " · egen variant"}</span>` : ""}${LAERER && o.skabelon ? '<button class="btn" id="nytal" type="button" style="min-height:34px;padding:4px 12px;font-size:14px">Nye tal</button>' : ""}</span></div>
       ${o.intro ? `<p class="intro">${mat(o.intro)}</p>` : ""}
       ${o.figur ? '<div class="fig"><svg role="img" aria-label="Figur til opgaven"></svg></div>' : ""}
-      ${dele.map(d => delHTML(o, d)).join("")}
+      ${dele.map(d => delHTML(o, d, enkelt)).join("")}
     </article>
-    <div class="navbar"><button class="btn" id="prev" type="button" ${i ? "" : "disabled"}>Forrige</button><button class="btn primary" id="next" type="button">${i + 1 < q.length ? "Næste opgave" : "Afslut"}</button></div>`;
+    <div class="navbar"><button class="btn" id="prev" type="button" ${i ? "" : "disabled"}>Forrige</button><button class="btn primary" id="next" type="button">Næste opgave</button></div>`;
   if (o.figur) { const svg = view.querySelector(".fig svg"); figurer.push([svg, o.figur]); tegnFigur(svg, o.figur); ro.observe(view); }
   document.getElementById("back").addEventListener("click", visStart);
+  const nt = document.getElementById("nytal"); if (nt) nt.addEventListener("click", () => { session.koe[session.i] = instans(o); visOpgave(); });
   document.getElementById("prev").addEventListener("click", () => { session.i--; visOpgave(); scrollTo(0, 0); });
-  document.getElementById("next").addEventListener("click", () => { session.i++; visOpgave(); scrollTo(0, 0); });
+  document.getElementById("next").addEventListener("click", () => {
+    if (session.i + 1 >= session.koe.length) { let ny = koe(); if (ny.length > 1 && ny[0].id === o.id) ny.push(ny.shift()); session.runder.push(session.koe.length); session.koe = session.koe.concat(ny); }
+    session.i++; visOpgave(); scrollTo(0, 0);
+  });
+  document.getElementById("afslut").addEventListener("click", visSlut);
+  view.querySelectorAll("[data-go]").forEach(b => b.addEventListener("click", () => { session.i = +b.dataset.go; visOpgave(); scrollTo(0, 0); }));
+  const cur = view.querySelector(".opgnav .cur"); if (cur) cur.parentElement.scrollLeft = cur.offsetLeft - cur.parentElement.offsetLeft - 60;
   dele.forEach(d => bindDel(o, d));
 }
 
-function delHTML(o, d) {
-  const k = delKey(o, d), t = tilstand[k] || (tilstand[k] = { hints: 0, sol: false, v: 0 });
-  const opt = !iValg(d) && !(session && session.fokus[o.id] === d.kategori);
-  return `<section class="del ${opt ? "optional" : ""}" data-key="${esc(k)}">
-    <div class="del-meta">${d.bogstav ? `<span class="del-letter">${d.bogstav})</span>` : ""}<span class="tag">${d.point} point</span>${dots(d.sv)}<span class="muted">${esc(underNavn[d.kategori] || "")}</span>${opt ? '<span class="tag">uden for dit valg – kan springes over</span>' : ""}</div>
+function delHTML(o, d, enkelt) {
+  const k = tk(o, d), t = tilstand[k] || (tilstand[k] = { hints: 0, sol: false, v: 0 });
+  return `<section class="del" data-key="${esc(k)}">
+    <div class="del-meta">${d.bogstav && !enkelt ? `<span class="del-letter">${d.bogstav})</span>` : ""}${dots(d.sv)}<span class="muted">${esc(underNavn[d.kategori] || "")}</span></div>
     <p class="del-text">${mat(d.tekst)}</p>
     <div class="del-body">${delBody(o, d, t)}</div>
   </section>`;
@@ -345,13 +385,13 @@ function delBody(o, d, t) {
   if (knapper.length) h += `<div class="row">${knapper.join("")}</div>`;
   if (t.sol) {
     h += `<div class="rate"><div class="q">Hvordan gik det?</div><div class="rate-list">${VURDERING.map(r => `<button type="button" data-v="${r.v}" aria-pressed="${t.v === r.v}"><span class="sw" style="background:${r.c}"></span>${r.txt}</button>`).join("")}</div>
-      ${lignendeKandidater(o, d).length ? `<div class="row" style="margin-top:10px"><button class="btn" type="button" data-act="lignende">Giv mig en lignende opgave</button></div>` : ""}
+      ${lignendeKandidater(o, d).length ? `<div class="row" style="margin-top:10px"><button class="btn" type="button" data-act="lignende">${o.skabelon ? "Samme opgave med nye tal" : "Giv mig en lignende opgave"}</button></div>` : ""}
       ${t.v ? `<div class="saved">Gemt${t.hints ? ` · du brugte ${t.hints} hint${t.hints > 1 ? "s" : ""}` : " · uden hints"}${lagringVirker ? "" : " (kun i denne session)"}.</div>` : ""}</div>`;
   }
   return h;
 }
 function bindDel(o, d) {
-  const k = delKey(o, d), t = tilstand[k];
+  const k = tk(o, d), sk = delKey(o, d), t = tilstand[k];
   const sec = [...view.querySelectorAll(".del")].find(s => s.dataset.key === k);
   const body = sec.querySelector(".del-body");
   body.addEventListener("click", e => {
@@ -360,36 +400,48 @@ function bindDel(o, d) {
     else if (b.dataset.act === "sol") t.sol = true;
     else if (b.dataset.act === "lignende") { lignende(o, d); return; }
     else if (b.dataset.v) {
-      const v = +b.dataset.v, ny = { key: k, o: o.id, d: d.bogstav, k: d.kategori, dp: o.delproeve, sv: d.sv, v, h: t.hints, t: Date.now() };
-      if (t.v && t.idx != null && store.forsoeg[t.idx] && store.forsoeg[t.idx].key === k) store.forsoeg[t.idx] = ny; // ret vurdering i samme forsøg
+      const v = +b.dataset.v, ny = { key: sk, o: o.id, d: d.bogstav, k: d.kategori, dp: o.delproeve, sv: d.sv, v, h: t.hints, t: Date.now() };
+      if (t.v && t.idx != null && store.forsoeg[t.idx] && store.forsoeg[t.idx].key === sk) store.forsoeg[t.idx] = ny; // ret vurdering i samme forsøg
       else { store.forsoeg.push(ny); t.idx = store.forsoeg.length - 1; }
       t.v = v; gem();
+      const nb = view.querySelector(".opgnav .cur"); if (nb) nb.classList.toggle("done", synlige(o).every(x => (tilstand[tk(o, x)] || {}).v));
     } else return;
     body.innerHTML = delBody(o, d, t);
   });
 }
 
 // "Giv mig en lignende opgave": samme underkategori, helst ikke set i denne session, helst samme delprøve
+// "Giv mig en lignende opgave":
+// skabelon → præcis samme opgave med nye tal; fast opgave → en anden opgave i samme underkategori
 function lignendeKandidater(o, d) {
+  if (o.skabelon) return [o];
   return OPG.filter(x => x.id !== o.id && x.dele.some(y => y.kategori === d.kategori && delOpen(y)));
 }
 function lignende(o, d) {
-  const sete = new Set(session.koe.slice(0, session.i + 1).map(x => x.id));
-  const score = x => (sete.has(x.id) ? 10 : 0) + (x.delproeve === o.delproeve ? 0 : 3) + Math.max(prioritet(x), -1) + Math.random();
-  const valgt = lignendeKandidater(o, d).sort((a, b) => score(a) - score(b))[0];
-  if (!valgt) return;
-  session.fokus[valgt.id] = d.kategori;
+  let valgt;
+  if (o.skabelon) valgt = instans(o);
+  else {
+    const sete = new Set(session.koe.slice(0, session.i + 1).map(x => x.id));
+    const score = x => (sete.has(x.id) ? 10 : 0) + (x.delproeve === o.delproeve ? 0 : 3) + Math.max(prioritet(x), -1) + Math.random();
+    valgt = lignendeKandidater(o, d).filter(x => synlige(x).length).sort((a, b) => score(a) - score(b))[0];
+    if (!valgt) return;
+    valgt = instans(valgt);
+    valgt.dele.forEach(y => delete tilstand[tk(valgt, y)]);
+  }
   session.koe.splice(session.i + 1, 0, valgt);
-  // nulstil visningen af den nye opgave, hvis den har været vist før i sessionen
-  valgt.dele.forEach(y => delete tilstand[delKey(valgt, y)]);
+  session.runder = session.runder.map(r => (r > session.i ? r + 1 : r));
+  if ((session.maks || 0) > session.i) session.maks++;
   session.i++; visOpgave(); scrollTo(0, 0);
 }
 
 function visSlut() {
   figurer = []; ro.disconnect();
-  view.innerHTML = `<div class="sheet empty"><h1>Godt arbejde</h1><p>Du har været alle opgaverne i dit valg igennem.</p>
-    <div class="row" style="justify-content:center"><button class="btn primary" id="igen" type="button">Træn igen</button><button class="btn" id="ov" type="button">Se din oversigt</button><button class="btn" id="nyt" type="button">Skift valg</button></div></div>`;
-  document.getElementById("igen").addEventListener("click", () => { Object.keys(tilstand).forEach(k => delete tilstand[k]); session = { koe: koe(), i: 0, fokus: {} }; visOpgave(); });
+  const antal = session ? store.forsoeg.filter(f => f.t >= session.start).length : 0;
+  const hele = session ? store.forsoeg.filter(f => f.t >= session.start && f.v === 6).length : 0;
+  view.innerHTML = `<div class="sheet empty"><h1>Godt arbejde</h1>
+    <p>${antal ? `Du har vurderet ${antal} delopgave${antal === 1 ? "" : "r"} i denne omgang, og ${hele} af dem kunne du hele vejen.` : "Du har ikke vurderet nogen delopgaver i denne omgang."}</p>
+    <div class="row" style="justify-content:center"><button class="btn primary" id="igen" type="button">Træn videre</button><button class="btn" id="ov" type="button">Se din oversigt</button><button class="btn" id="nyt" type="button">Skift valg</button></div></div>`;
+  document.getElementById("igen").addEventListener("click", () => { if (session && session.i < session.koe.length) visOpgave(); else visStart(); });
   document.getElementById("ov").addEventListener("click", visOversigt);
   document.getElementById("nyt").addEventListener("click", visStart);
 }
